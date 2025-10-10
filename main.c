@@ -1,7 +1,7 @@
 /******************************************************************************
  * File Name:   main.c
  *
- * Description: This is the source code for the PSoC 4: MSCLP low-power self-capacitance button
+ * Description: This is the source code for the PSoC 4: MSCLP CAPSENSE&trade; Low Power
  *              Example for ModusToolbox.
  *
  * Related Document: See README.md
@@ -15,117 +15,164 @@
  * Include header files
  ******************************************************************************/
 
+
+ 
+ //HAY QUE INCLUIR LAS FUNCIONALIDADES DEL IIR Y DEL C2C
+
 #include "cy_pdl.h"
 #include "cybsp.h"
 #include "cycfg.h"
 #include "cycfg_capsense.h"
 
+
+//Archivos necesarios para el clock
+#include "cycfg_peripherals.h"
+#include "cy_wdt.h"
+
+void mcwdt_isr(void)
+{
+    /* Clear interrupt */
+    Cy_WDT_ClearInterrupt();
+    
+    /* Tu código aquí */
+}
+
 /*******************************************************************************
  * User configurable Macros
  ********************************************************************************/
 /*Enables the Runtime measurement functionality used to for processing time measurement */
+//Esto hay que activarlo para hacer las pruebas
 #define ENABLE_RUN_TIME_MEASUREMENT     (0u)
+
+
+#define ENABLE_LP_TIME_MEASUREMENT      (1u)
 
 /* Enable this, if Tuner needs to be enabled */
 #define ENABLE_TUNER                    (1u)
 
-/*Enable PWM controlled LEDs*/
-#define ENABLE_PWM_LED                  (1u)
+/*Enable PWM controlled LEDs... acá prenden los leds*/
+// #define ENABLE_PWM_LED                  (1u)
 
 /* 128Hz Refresh rate in Active mode */
 #define ACTIVE_MODE_REFRESH_RATE        (128u)
 
-/* 32Hz Refresh rate in Active-Low Refresh rate(ALR) mode */
-#define ALR_MODE_REFRESH_RATE           (32u)
 
-/* Timeout to move from ACTIVE mode to ALR mode if there is no user activity */
+/* TIEMPO PARA PASAR A ALR SI NO HAY ACTIVIDAD*/
 #define ACTIVE_MODE_TIMEOUT_SEC         (10u)
 
-/* Timeout to move from ALR mode to WOT mode if there is no user activity */
-#define ALR_MODE_TIMEOUT_SEC            (5u)
 
-/* Active mode Scan time calculated in us ~= 16us */
-#define ACTIVE_MODE_FRAME_SCAN_TIME     (16u)
 
-/* Active mode Processing time in us ~= 23us with PWM LED and Tuner disabled*/
+
+/* SCAN TIME DEL ACTIVE MODE*/
+#define ACTIVE_MODE_FRAME_SCAN_TIME     (46u)
+
+
+
+/* TIEMPO DE PROCESAMIENTO*/
 #define ACTIVE_MODE_PROCESS_TIME        (23u)
 
-/* ALR mode Scan time calculated in us ~= 16us */
-#define ALR_MODE_FRAME_SCAN_TIME        (16u)
 
-/* ALR mode Processing time in us ~= 23us with PWM LED and Tuner disabled*/
-#define ALR_MODE_PROCESS_TIME           (23u)
+//REFRESH RATE DE 4HZ EN WOT
+
+#define WOT_MODE_REFRESH_RATE           (4u)
+
+// #define ALR_MODE_PROCESS_TIME        (23u)
+
+#define WOT_MODE_FRAME_SCAN_TIME        (20u)  
+
+#define DEEP_SLEEP_DEACT_TIME           (1800000000u)
+
+
 
 /*******************************************************************************
  * Macros
  ********************************************************************************/
 #define CAPSENSE_MSC0_INTR_PRIORITY     (3u)
+
 #define CY_ASSERT_FAILED                (0u)
 
 /* EZI2C interrupt priority must be higher than CAPSENSE&trade; interrupt. */
 #define EZI2C_INTR_PRIORITY             (2u)
 
-/* Define the conditions to check sensor status */
-#define CAPSENSE_WIDGET_INACTIVE        (0u)
-
-
-#define ILO_FREQ                        (40000u)
+#define ILO_FREQ                        (40000u) // 25 HZ el oscilador interno
 #define TIME_IN_US                      (1000000u)
 
 #define MINIMUM_TIMER                   (TIME_IN_US / ILO_FREQ)
 #if ((TIME_IN_US / ACTIVE_MODE_REFRESH_RATE) > (ACTIVE_MODE_FRAME_SCAN_TIME + ACTIVE_MODE_PROCESS_TIME))
+
 #define ACTIVE_MODE_TIMER           (TIME_IN_US / ACTIVE_MODE_REFRESH_RATE - \
         (ACTIVE_MODE_FRAME_SCAN_TIME + ACTIVE_MODE_PROCESS_TIME))
 #elif
 #define ACTIVE_MODE_TIMER           (MINIMUM_TIMER)
 #endif
 
-#if ((TIME_IN_US / ALR_MODE_REFRESH_RATE) > (ALR_MODE_FRAME_SCAN_TIME + ALR_MODE_PROCESS_TIME))
-#define ALR_MODE_TIMER              (TIME_IN_US / ALR_MODE_REFRESH_RATE - \
-        (ALR_MODE_FRAME_SCAN_TIME + ALR_MODE_PROCESS_TIME))
-#elif
-#define ALR_MODE_TIMER              (MINIMUM_TIMER)
+//WOT REFRESH RATE
+#if ((TIME_IN_US / WOT_MODE_REFRESH_RATE) > (WOT_MODE_FRAME_SCAN_TIME + WOT_MODE_PROCESS_TIME))
+
+#define WOT_MODE_TIMER                  (TIME_IN_US / WOT_MODE_REFRESH_RATE - WOT_MODE_FRAME_SCAN_TIME)
+
+#else
+#define WOT_MODE_TIMER                  (MINIMUM_TIMER)
 #endif
 
 #define ACTIVE_MODE_TIMEOUT             (ACTIVE_MODE_REFRESH_RATE * ACTIVE_MODE_TIMEOUT_SEC)
 
-#define ALR_MODE_TIMEOUT                (ALR_MODE_REFRESH_RATE * ALR_MODE_TIMEOUT_SEC)
+
+// TIMEOUT EN WOT
+
+#define WOT_MODE_TIMEOUT_SEC            (16u) //16 usegundos
+
+// Timeout establecido para un caso de 8 sensores 21 raw counts
+#define WOT_MODE_TIMEOUT                ((TIME_IN_US / WOT_MODE_REFRESH_RATE)*WOT_MODE_TIMEOUT_SEC)
+
 
 #define TIMEOUT_RESET                   (0u)
-
-#if ENABLE_PWM_LED
-#define ACTIVE_BLINK_RATE_IN_HZ         (10u)
-#define ALR_BLINK_RATE_IN_HZ            (2u)
-#define WOT_BLINK_RATE_IN_HZ            (1u)
-#define PWM_FREQ                        (7812u)
-#define ACTIVE_MODE_LED_BLINK_PERIOD    (PWM_FREQ/ACTIVE_BLINK_RATE_IN_HZ)
-#define ALR_MODE_LED_BLINK_PERIOD       ((uint32_t)(PWM_FREQ/ALR_BLINK_RATE_IN_HZ))
-#define WOT_MODE_LED_BLINK_PERIOD       (PWM_FREQ/WOT_BLINK_RATE_IN_HZ)
-#define ACTIVE_MODE_LED_BLINK_DUTY_CYCLE ((ACTIVE_MODE_LED_BLINK_PERIOD)>>1u)
-#define ALR_MODE_LED_BLINK_DUTY_CYCLE   ((ALR_MODE_LED_BLINK_PERIOD)>>1u)
-#define WOT_MODE_LED_BLINK_DUTY_CYCLE   ((WOT_MODE_LED_BLINK_PERIOD)>>2u)
-#define CYBSP_LED_OFF                   (0u)
-#define CYBSP_LED_ON                    (1u)
-#endif
-
 
 #if ENABLE_RUN_TIME_MEASUREMENT
 #define SYS_TICK_INTERVAL           (0x00FFFFFF)
 #define TIME_PER_TICK_IN_US         ((float)1/CY_CAPSENSE_CPU_CLK)*TIME_IN_US
 #endif
 
+
+//Logica incorrecta
+// LOW POWER TIME MEASUREMENT USING ILO AT 40KHZ
+// #if ENABLE_LP_TIME_MEASUREMENT
+// // En torno a 7 minutos para overflow
+// #define SYS_TICK_INTERVAL           (0x00FFFFFF)
+// #define TIME_PER_TICK_IN_US        ((float)1/CY_SYSCLK_ILO_FREQ)*TIME_IN_US
+// #endif
+
+/* Touch status of the proximity sensor */
+#define TOUCH_STATE                     (3u)
+
+/* Proximity status of the proximity sensor */
+#define PROX_STATE                      (1u)
+
+
+
+
+// WATCHDOGTIMER DEFINITIONS
+#define 	CY_MCWDT_CTR0   (1UL << CY_MCWDT_CTR0_Pos)
+
+
+
+
+// Flag del vaciado de memoria
+bool mem_flag = false;
+
+
+
 /*****************************************************************************
  * Finite state machine states for device operating states
  *****************************************************************************/
 typedef enum
 {
-    ACTIVE_MODE = 0x01u,    /* Active mode - All the sensors are scanned in this state
-     * with highest refresh rate */
-    ALR_MODE = 0x02u,       /* Active-Low Refresh Rate (ALR) mode - All the sensors are
-     * scanned in this state with low refresh rate */
-    WOT_MODE = 0x03u        /* Wake on Touch (WoT) mode - Low Power sensors are scanned
-     * in this state with lowest refresh rate */
+    WOT_MODE = 0x01u,
+    ACTIVE_MODE = 0x02u,    /* Active mode - All the sensors are scanned in this state  * with highest refresh rate */
+    DEACT_MODE = 0X03u        /* Wake on Touch (WoT) mode - Low Power sensors are scanned* in this state with lowest refresh rate */
 } APPLICATION_STATE;
+
+
 
 /*******************************************************************************
  * Function Prototypes
@@ -142,14 +189,30 @@ static void start_runtime_measurement();
 static uint32_t stop_runtime_measurement();
 #endif
 
-#if ENABLE_PWM_LED
-void led_control();
-#endif
+
+volatile bool wdt_flag = false;
+volatile uint32_t wdt_ticks = 0;
+
+// Función del contador WDT WatchDog Timer
+void WDT_IRQHandler(void){
+    Cy_WDT_ClearInterrupt();
+    wdt_ticks++;
+     if (wdt_ticks >= 1800u)
+    {
+        wdt_ticks = 0;
+        wdt_flag = true;   // Aquí prendes tu flag
+    }
+}
+
 
 /* Deep Sleep Callback function */
 void register_callback(void);
 cy_en_syspm_status_t deep_sleep_callback(cy_stc_syspm_callback_params_t *callbackParams,
         cy_en_syspm_callback_mode_t mode);
+
+
+
+        
 
 /*******************************************************************************
  * Global Definitions
@@ -157,7 +220,6 @@ cy_en_syspm_status_t deep_sleep_callback(cy_stc_syspm_callback_params_t *callbac
 
 /* Variables holds the current low power state [ACTIVE, ALR or WOT] */
 APPLICATION_STATE capsense_state;
-APPLICATION_STATE prev_capsense_state;
 
 cy_stc_scb_ezi2c_context_t ezi2c_context;
 
@@ -200,6 +262,11 @@ cy_stc_syspm_callback_t deepSleepCb =
         .order          = 2
 };
 
+//ELIMINAR
+static cy_stc_syspm_callback_params_t capsenseCbParams = {
+    .base = NULL,
+    .context = &cy_capsense_context  // puntero a tu estructura de contexto CapSense
+};
 
 /*******************************************************************************
  * Function Name: main
@@ -210,7 +277,7 @@ cy_stc_syspm_callback_t deepSleepCb =
  *  - initialize CAPSENSE&trade;
  *  - initialize tuner communication
  *  - scan touch input continuously at 3 different power modes
- *  - user LED for touch indication
+ *  - LED for touch indication
  *
  * Return:
  *  int
@@ -221,11 +288,11 @@ int main(void)
     cy_rslt_t result;
     uint32_t capsense_state_timeout;
     uint32_t interruptStatus;
-
+    // Variables WOT
+    mem_flag = false;
 
     #if ENABLE_RUN_TIME_MEASUREMENT
     static uint32_t active_processing_time;
-    static uint32_t alr_processing_time;
     #endif
 
     /* Initialize the device and board peripherals */
@@ -247,24 +314,24 @@ int main(void)
     /* Initialize EZI2C */
     initialize_capsense_tuner();
 
-    #if ENABLE_PWM_LED
-    /* Initialize PWM block */
-    (void)Cy_TCPWM_PWM_Init(CYBSP_PWM_HW, CYBSP_PWM_NUM, &CYBSP_PWM_config);
-    /* Enable the initialized PWM */
-    Cy_TCPWM_Enable_Multiple(CYBSP_PWM_HW, CYBSP_PWM_MASK);
-    /* Then start the PWM */
-    Cy_TCPWM_TriggerReloadOrIndex(CYBSP_PWM_HW, CYBSP_PWM_MASK);
-
-    Cy_TCPWM_PWM_SetPeriod0(CYBSP_PWM_HW, CYBSP_PWM_NUM,390);
-    Cy_TCPWM_PWM_SetCompare0(CYBSP_PWM_HW, CYBSP_PWM_NUM,195);
-    #endif
+    // #if ENABLE_PWM_LED
+    // /* Initialize PWM block */
+    // (void)Cy_TCPWM_PWM_Init(CYBSP_PWM_HW, CYBSP_PWM_NUM, &CYBSP_PWM_config);
+    // /* Enable the initialized PWM */
+    // Cy_TCPWM_Enable_Multiple(CYBSP_PWM_HW, CYBSP_PWM_MASK);
+    // /* Then start the PWM */
+    // Cy_TCPWM_TriggerReloadOrIndex(CYBSP_PWM_HW, CYBSP_PWM_MASK);
+    // #endif
 
     /* Register callbacks */
     register_callback();
 
     /* Define initial state of the device and the corresponding refresh rate*/
-    capsense_state = ACTIVE_MODE;
-    capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
+    // capsense_state = ACTIVE_MODE;
+
+    //Inicializamos en WoT mode
+    capsense_state = WOT_MODE;
+    capsense_state_timeout = WOT_MODE_TIMEOUT;
 
     /* Initialize MSC CAPSENSE&trade; */
     initialize_capsense();
@@ -273,126 +340,32 @@ int main(void)
     Cy_CapSense_IloCompensate(&cy_capsense_context);
 
     /* Configure the MSCLP wake up timer as per the ACTIVE mode refresh rate */
-    Cy_CapSense_ConfigureMsclpTimer(ACTIVE_MODE_TIMER, &cy_capsense_context);
+    Cy_CapSense_ConfigureMsclpTimer(WOT_MODE_TIMER, &cy_capsense_context);
+
+
+    // Configuraciones del WDT
+
+    Cy_WDT_Unlock();
+
+    Cy_WDT_SetIgnoreBits(0u);
+    Cy_WDT_SetMatch(40000u);
+
+    Cy_WDT_ClearInterrupt();
+    // NVIC_EnableIRQ(WDT_IRQHandler);
+    // NVIC_EnableIRQ(WCO_IRQn);
+    Cy_WDT_Enable();
+    uint32_t conteo = Cy_WDT_GetCount();
+    CY_WDT_Lock();
+
+    //Fin configuraciones WDT
 
     for (;;)
     {
         switch(capsense_state)
         {
-            case ACTIVE_MODE:
-
-                Cy_CapSense_ScanAllSlots(&cy_capsense_context);
-
-                interruptStatus = Cy_SysLib_EnterCriticalSection();
-
-                while (Cy_CapSense_IsBusy(&cy_capsense_context))
-                {
-                    #if ENABLE_PWM_LED
-                    Cy_SysPm_CpuEnterSleep();
-                    #else
-                    Cy_SysPm_CpuEnterDeepSleep();
-                    #endif
-
-                    Cy_SysLib_ExitCriticalSection(interruptStatus);
-
-                    /* This is a place where all interrupt handlers will be executed */
-                    interruptStatus = Cy_SysLib_EnterCriticalSection();
-                }
-
-                Cy_SysLib_ExitCriticalSection(interruptStatus);
-
-                #if ENABLE_RUN_TIME_MEASUREMENT
-                active_processing_time=0;
-                start_runtime_measurement();
-                #endif
-
-                Cy_CapSense_ProcessAllWidgets(&cy_capsense_context);
-
-                /* Scan, process and check the status of the all Active mode sensors */
-                if(Cy_CapSense_IsAnyWidgetActive(&cy_capsense_context))
-                {
-                    capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
-                }
-                else
-                {
-                    capsense_state_timeout--;
-
-                    if(TIMEOUT_RESET == capsense_state_timeout)
-                    {
-                        capsense_state = ALR_MODE;
-                        capsense_state_timeout = ALR_MODE_TIMEOUT;
-
-                        /* Configure the MSCLP wake up timer as per the ALR mode refresh rate */
-                        Cy_CapSense_ConfigureMsclpTimer(ALR_MODE_TIMER, &cy_capsense_context);
-                    }
-                }
-
-                #if ENABLE_RUN_TIME_MEASUREMENT
-                active_processing_time=stop_runtime_measurement();
-                #endif
-
-                break;
-                /* End of ACTIVE_MODE */
-
-                /* Active Low Refresh-rate Mode */
-            case ALR_MODE :
-
-                Cy_CapSense_ScanAllSlots(&cy_capsense_context);
-
-                interruptStatus = Cy_SysLib_EnterCriticalSection();
-
-                while (Cy_CapSense_IsBusy(&cy_capsense_context))
-                {
-                    #if ENABLE_PWM_LED
-                    Cy_SysPm_CpuEnterSleep();
-                    #else
-                    Cy_SysPm_CpuEnterDeepSleep();
-                    #endif
-
-                    Cy_SysLib_ExitCriticalSection(interruptStatus);
-
-                    /* This is a place where all interrupt handlers will be executed */
-                    interruptStatus = Cy_SysLib_EnterCriticalSection();
-                }
-
-                Cy_SysLib_ExitCriticalSection(interruptStatus);
-
-                #if ENABLE_RUN_TIME_MEASUREMENT
-                alr_processing_time=0;
-                start_runtime_measurement();
-                #endif
-
-                Cy_CapSense_ProcessAllWidgets(&cy_capsense_context);
-
-                /* Scan, process and check the status of the all Active mode sensors */
-                if(Cy_CapSense_IsAnyWidgetActive(&cy_capsense_context))
-                {
-                    capsense_state = ACTIVE_MODE;
-                    capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
-
-                    /* Configure the MSCLP wake up timer as per the ACTIVE mode refresh rate */
-                    Cy_CapSense_ConfigureMsclpTimer(ACTIVE_MODE_TIMER, &cy_capsense_context);
-                }
-                else
-                {
-                    capsense_state_timeout--;
-
-                    if(TIMEOUT_RESET == capsense_state_timeout)
-                    {
-                        capsense_state = WOT_MODE;
-
-                    }
-                }
-
-                #if ENABLE_RUN_TIME_MEASUREMENT
-                alr_processing_time=stop_runtime_measurement();
-                #endif
-
-                break;
-                /* End of Active-Low Refresh Rate(ALR) mode */
-
-                /* Wake On Touch Mode */
+            /* Wake On Touch Mode */
             case WOT_MODE :
+                
 
                 Cy_CapSense_ScanAllLpSlots(&cy_capsense_context);
 
@@ -400,11 +373,7 @@ int main(void)
 
                 while (Cy_CapSense_IsBusy(&cy_capsense_context))
                 {
-                    #if ENABLE_PWM_LED
-                    Cy_SysPm_CpuEnterSleep();
-                    #else
                     Cy_SysPm_CpuEnterDeepSleep();
-                    #endif
 
                     Cy_SysLib_ExitCriticalSection(interruptStatus);
 
@@ -417,31 +386,177 @@ int main(void)
                 if (Cy_CapSense_IsAnyLpWidgetActive(&cy_capsense_context))
                 {
                     capsense_state = ACTIVE_MODE;
+                    //Frecuencia de muestreo de active mode
                     capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
+
+                    // #if ENABLE_PWM_LED
+                    // /* Initialize PWM block */
+                    // (void)Cy_TCPWM_PWM_Init(CYBSP_PWM_HW, CYBSP_PWM_NUM, &CYBSP_PWM_config);
+                    // /* Enable the initialized PWM */
+                    // Cy_TCPWM_Enable_Multiple(CYBSP_PWM_HW, CYBSP_PWM_MASK);
+                    // /* Then start the PWM */
+                    // Cy_TCPWM_TriggerReloadOrIndex(CYBSP_PWM_HW, CYBSP_PWM_MASK);
+                    // #endif
 
                     /* Configure the MSCLP wake up timer as per the ACTIVE mode refresh rate */
                     Cy_CapSense_ConfigureMsclpTimer(ACTIVE_MODE_TIMER, &cy_capsense_context);
                 }
+
+                //Preguntar si es necesario insertar aquí una critical section
+                //Revisar el ultimo address pero igual dejar un timeout
+
+                else if(wdt_flag){
+                    mem_flag = true;
+                    capsense_state = ACTIVE_MODE;
+                    //Frecuencia de muestreo de active mode
+                    capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
+                    // active_processing_time = 0;
+                }
+
                 else
                 {
-                    capsense_state = ALR_MODE;
-                    capsense_state_timeout = ALR_MODE_TIMEOUT;
+                    //TIMEOUT DEL WOT
+                    // wot_timeout--;
+                    // if(wot_timeout == TIMEOUT_RESET)
+                    // {
+                    //     capsense_state = ACTIVE_MODE;
+                    //     mem_flag = true;
+                   Cy_CapSense_ConfigureMsclpTimer(WOT_MODE_TIMER, &cy_capsense_context);
+
+                    // }
+                    
 
                     /* Configure the MSCLP wake up timer as per the ALR mode refresh rate */
-                    Cy_CapSense_ConfigureMsclpTimer(ALR_MODE_TIMER, &cy_capsense_context);
                 }
 
                 break;
                 /* End of "WAKE_ON_TOUCH_MODE" */
+
+
+
+
+            case ACTIVE_MODE:
+
+                Cy_CapSense_ScanAllSlots(&cy_capsense_context);
+
+                // Deshabilita, interrumpe y retorna un valor que indica si
+                // la interrupcion estaba previamente habilitada (0) o si no (1)
+                // Entra en una sección crítica que deshabilita las interrupciones
+                // globales
+                interruptStatus = Cy_SysLib_EnterCriticalSection();
+
+                while (Cy_CapSense_IsBusy(&cy_capsense_context))
+                {
+                    
+                    Cy_SysPm_CpuEnterDeepSleep();
+                    // Cy_SysPm_CpuEnterSleep();
+
+                    //Rehabilita las interrupciones si se llamo previamente
+                    //el enterCriticalSection
+
+                    Cy_SysLib_ExitCriticalSection(interruptStatus);
+
+                    /* This is a place where all interrupt handlers will be executed */
+                    interruptStatus = Cy_SysLib_EnterCriticalSection();
+                }
+
+                // Run time Measurement
+
+                #if ENABLE_RUN_TIME_MEASUREMENT
+                active_processing_time=0;
+                start_runtime_measurement();
+                #endif
+                 //Salimos de seccion critica
+                Cy_SysLib_ExitCriticalSection(interruptStatus);
+
+
+
+                /*Aqui se:
+                -Aplican los filtros
+                -Actualizan los umbrales para el auto-tuning
+                -Actualizan los baselines
+                -Actualizan los estados de salida de sensores y widgets
+                No llamar sin escaneos previos*/
+
+                Cy_CapSense_ProcessAllWidgets(&cy_capsense_context);
+
+                /* Scan, process and check the status of the all Active mode sensors */
+                // aqui se detectan los toques
+                if(Cy_CapSense_IsAnyWidgetActive(&cy_capsense_context))
+                {
+                    capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
+                    
+                }
+
+                else if(mem_flag){
+                    // Vaciar la memoria
+
+
+                    capsense_state = WOT_MODE;
+                    //Frecuencia de muestreo de active mode
+                    capsense_state_timeout = WOT_MODE_TIMEOUT;
+                    mem_flag = false;
+
+
+                }
+
+
+                else
+                {
+                    capsense_state_timeout--;
+
+                    if(TIMEOUT_RESET == capsense_state_timeout)
+                    {
+                        capsense_state = WOT_MODE;
+                        capsense_state_timeout = WOT_MODE_TIMEOUT;
+
+                        /* Configure the MSCLP wake up timer as per the ALR mode refresh rate */
+                        Cy_CapSense_ConfigureMsclpTimer(WOT_MODE_TIMER, &cy_capsense_context);
+                    }
+                }
+
+                #if ENABLE_RUN_TIME_MEASUREMENT
+                active_processing_time=stop_runtime_measurement();
+                #endif
+
+                // #if ENABLE_PWM_LED
+                // led_control();
+                // #endif
+
+
+                // CONDICION DE PASO A WOT
+
+                break;
+                /* End of ACTIVE_MODE */
+
+                /*START OF DEACTIVE_MODE*/
+                case DEACT_MODE:
+                // Comando para apagar el sistema
+                // Cy_CapSense_DeepSleepCallback(&capsenseCbParams, CY_SYSPM_CHECK_READY);
+                Cy_SysPm_CpuEnterDeepSleep();
+                // Cy_SysPm_CpuEnterDeepSleep();
+
+    
+                // if (active_processing_time >= DEEP_SLEEP_DEACT_TIME){
+                 if (wdt_flag){
+                    capsense_state = WOT_MODE;
+                    capsense_state_timeout = WOT_MODE_TIMEOUT;
+                    Cy_CapSense_ConfigureMsclpTimer(WOT_MODE_TIMER, &cy_capsense_context);
+                 }
+                break;
+
+
+          
+                
+
+                
 
             default:
                 /**  Unknown power mode state. Unexpected situation.  **/
                 CY_ASSERT(CY_ASSERT_FAILED);
                 break;
         }
-        #if ENABLE_PWM_LED
-        led_control();
-        #endif
+
 
         #if ENABLE_TUNER
         /* Establishes synchronized communication with the CAPSENSE&trade; Tuner tool */
@@ -541,7 +656,6 @@ static void initialize_capsense_tuner(void)
             sizeof(cy_capsense_tuner), sizeof(cy_capsense_tuner),
             &ezi2c_context);
     #endif
-
     Cy_SCB_EZI2C_Enable(CYBSP_EZI2C_HW);
 
 }
@@ -568,7 +682,7 @@ static void ezi2c_isr(void)
  *******************************************************************************/
 static void init_sys_tick()
 {
-    Cy_SysTick_Init (CY_SYSTICK_CLOCK_SOURCE_CLK_CPU ,0x00FFFFFF);
+    Cy_SysTick_Init (CY_SYSTICK_CLOCK_SOURCE_CLK_CPU ,SYS_TICK_INTERVAL);
 }
 #endif
 
@@ -593,7 +707,9 @@ static void start_runtime_measurement()
  *  Returns:
  *  runtime - in microseconds(us)
  *******************************************************************************/
+#endif
 
+#if ENABLE_RUN_TIME_MEASUREMENT
 static uint32_t stop_runtime_measurement()
 {
     uint32_t ticks;
@@ -605,66 +721,49 @@ static uint32_t stop_runtime_measurement()
 }
 #endif
 
-#if ENABLE_PWM_LED
+// #if ENABLE_PWM_LED
+// uint32_t proxSensorStatus;
+// uint32_t proxLedBrightness = 0u;
+// uint16_t proxMaxRawCount = 0u;
+// uint16_t maxDiffCount = 0u;
 /*******************************************************************************
  * Function Name: led_control
  ********************************************************************************
  * Summary:
- *  Control USER LED2 in the kit to show the button status:
- *    No touch - LED2 == OFF
- *    Touch - LED2 == ON
- *  Control USER LED3 in the kit to show different power modes:
- *    Active Mode :LED3 Blinks at a fast rate
- *    ALR Mode :LED3 Blinks at a medium rate
- *    WOT Mode :LED3 Blinks at a slow rate
+ *  Control LED3 in the kit to show the proximity status
+ *  LED3 brightness changes based on proximity distance using PWM(CYBSP_PWM)
+ *
+ *  Control LED2(CYBSP_USER_LED) in the kit to show the touch status
+ *  LED2 turns ON when a touch is detected
  *******************************************************************************/
-void led_control()
-{
+// void led_control()
+// {
+//     /* Both LEDs are turned off when proximity/touch is not detected */
+//     Cy_TCPWM_PWM_SetCompare0(CYBSP_PWM_HW, CYBSP_PWM_NUM, 0);
+//     Cy_GPIO_Write(CYBSP_USER_LED_PORT, CYBSP_USER_LED_NUM, CYBSP_LED_OFF);
 
-    if (CAPSENSE_WIDGET_INACTIVE != Cy_CapSense_IsWidgetActive(CY_CAPSENSE_BUTTON0_WDGT_ID, &cy_capsense_context))
-    {
-        Cy_GPIO_Write(CYBSP_USER_LED2_PORT, CYBSP_USER_LED2_NUM, CYBSP_LED_ON);
-    }
-    else
-    {
-        Cy_GPIO_Write(CYBSP_USER_LED2_PORT, CYBSP_USER_LED2_NUM, CYBSP_LED_OFF);
-    }
+//     if(Cy_CapSense_IsAnyWidgetActive(&cy_capsense_context))
+//     {
+//         proxSensorStatus = Cy_CapSense_IsProximitySensorActive(CY_CAPSENSE_PROXIMITY0_WDGT_ID, CY_CAPSENSE_PROXIMITY0_SNS0_ID, &cy_capsense_context);
+//         proxMaxRawCount = cy_capsense_tuner.widgetContext[CY_CAPSENSE_PROXIMITY0_WDGT_ID].maxRawCount;
+//         maxDiffCount = proxMaxRawCount - cy_capsense_tuner.sensorContext[CY_CAPSENSE_PROXIMITY0_SNS0_ID].bsln;
+//         proxLedBrightness = ((uint32_t)(cy_capsense_tuner.sensorContext[CY_CAPSENSE_PROXIMITY0_SNS0_ID].diff*CYBSP_PWM_config.period0)/maxDiffCount);
 
-    /* LED3 Control: Based on application power mode */
-    if( capsense_state!=prev_capsense_state)
-    {
-        switch(capsense_state)
-        {
-            case ACTIVE_MODE:
-                /* LED3 blinks at a fast rate */
-                Cy_TCPWM_TriggerReloadOrIndex(CYBSP_PWM_HW, CYBSP_PWM_MASK);
-                Cy_TCPWM_PWM_SetPeriod0(CYBSP_PWM_HW, CYBSP_PWM_NUM,ACTIVE_MODE_LED_BLINK_PERIOD);
-                Cy_TCPWM_PWM_SetCompare0(CYBSP_PWM_HW, CYBSP_PWM_NUM,(ACTIVE_MODE_LED_BLINK_DUTY_CYCLE));
-                break;
-
-            case ALR_MODE:
-                /* LED3 blinks at a medium rate */
-                Cy_TCPWM_TriggerReloadOrIndex(CYBSP_PWM_HW, CYBSP_PWM_MASK);
-                Cy_TCPWM_PWM_SetPeriod0(CYBSP_PWM_HW, CYBSP_PWM_NUM,ALR_MODE_LED_BLINK_PERIOD);
-                Cy_TCPWM_PWM_SetCompare0(CYBSP_PWM_HW, CYBSP_PWM_NUM, (ALR_MODE_LED_BLINK_DUTY_CYCLE));
-                break;
-
-            case WOT_MODE:
-                /* LED3 blinks at a slow rate */
-                Cy_TCPWM_TriggerReloadOrIndex(CYBSP_PWM_HW, CYBSP_PWM_MASK);
-                Cy_TCPWM_PWM_SetPeriod0(CYBSP_PWM_HW, CYBSP_PWM_NUM,WOT_MODE_LED_BLINK_PERIOD);
-                Cy_TCPWM_PWM_SetCompare0(CYBSP_PWM_HW, CYBSP_PWM_NUM, (WOT_MODE_LED_BLINK_DUTY_CYCLE));
-                break;
-
-            default:
-                /* Unknown power mode state. Unexpected situation. */
-                CY_ASSERT(CY_ASSERT_FAILED);
-                break;
-        }
-        prev_capsense_state=capsense_state;
-    }
-}
-#endif
+//         if(proxSensorStatus == PROX_STATE)
+//         {
+//             /* LED Turns ON and brightness changes based on proximity distance */
+//             Cy_TCPWM_PWM_SetCompare0(CYBSP_PWM_HW, CYBSP_PWM_NUM, proxLedBrightness);
+//         }
+//         else if(proxSensorStatus == TOUCH_STATE)
+//         {
+//             /* LED Turns ON when touch is detected */
+//             Cy_GPIO_Write(CYBSP_USER_LED_PORT, CYBSP_USER_LED_NUM, CYBSP_LED_ON);
+//             /* LED Turns ON and brightness changes based on proximity distance */
+//             Cy_TCPWM_PWM_SetCompare0(CYBSP_PWM_HW, CYBSP_PWM_NUM, proxLedBrightness);
+//         }
+//     }
+// }
+// #endif
 
 /*******************************************************************************
  * Function Name: register_callback
