@@ -29,19 +29,19 @@
 #include "cycfg_peripherals.h"
 #include "cy_wdt.h"
 
-void mcwdt_isr(void)
-{
-    /* Clear interrupt */
-    Cy_WDT_ClearInterrupt();
-    
-    /* Tu código aquí */
-}
 
 /*******************************************************************************
  * User configurable Macros
  ********************************************************************************/
 /*Enables the Runtime measurement functionality used to for processing time measurement */
 //Esto hay que activarlo para hacer las pruebas
+
+#define WDT_RESET_DEMO             (1U)
+#define WDT_INTERRUPT_DEMO         (2U)
+#define WDT_DEMO                   (WDT_INTERRUPT_DEMO)
+
+
+
 #define ENABLE_RUN_TIME_MEASUREMENT     (0u)
 
 
@@ -345,17 +345,17 @@ int main(void)
 
     // Configuraciones del WDT
 
-    Cy_WDT_Unlock();
+    // Cy_WDT_Unlock();
 
-    Cy_WDT_SetIgnoreBits(0u);
-    Cy_WDT_SetMatch(40000u);
+    // Cy_WDT_SetIgnoreBits(0u);
+    // Cy_WDT_SetMatch(40000u);
 
-    Cy_WDT_ClearInterrupt();
-    // NVIC_EnableIRQ(WDT_IRQHandler);
-    // NVIC_EnableIRQ(WCO_IRQn);
-    Cy_WDT_Enable();
-    uint32_t conteo = Cy_WDT_GetCount();
-    CY_WDT_Lock();
+    // Cy_WDT_ClearInterrupt();
+    // // NVIC_EnableIRQ(WDT_IRQHandler);
+    // // NVIC_EnableIRQ(WCO_IRQn);
+    // Cy_WDT_Enable();
+    // uint32_t conteo = Cy_WDT_GetCount();
+    // CY_WDT_Lock();
 
     //Fin configuraciones WDT
 
