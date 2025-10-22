@@ -33,34 +33,16 @@
 /*******************************************************************************
  * User configurable Macros
  ********************************************************************************/
-/*Macros WDT */ 
-
-
-#define WDT_RESET_DEMO             (1U)
-
-//Intervalo de interrupción
-#define WDT_INTERRUPT_DEMO         (2U)
-
-//Modo de interrupcion
-#define WDT_DEMO                   (WDT_INTERRUPT_DEMO)
-// Media hora son 1061 intervalos, valor máximo es de 1698 ms
-#define WDT_INTERRUPT_INTERVAL_MS  (1698U)
-
-// 16 bits completos del contador
-#define IGNORE_BITS                (0U)
-
-
-#define ILO_START_UP_TIME          (2U)
-#define WDT_INTERRUPT_PRIORITY     (0U)
-
-#define ENABLE_RUN_TIME_MEASUREMENT     (0u)
-
-
-// #define ENABLE_LP_TIME_MEASUREMENT      (1u)
+/*Enables the Runtime measurement functionality used to for processing time measurement */
+//Esto hay que activarlo para hacer las pruebas
+#define ENABLE_RUN_TIME_MEASUREMENT     (1u)
 
 /* Enable this, if Tuner needs to be enabled */
 #define ENABLE_TUNER                    (1u)
 
+/*Enable PWM controlled LEDs... acá prenden los leds*/
+// #define ENABLE_PWM_LED                  (1u)
+#define ILO_FREQUENCY           (40000U)
 
 /* 128Hz Refresh rate in Active mode */
 #define ACTIVE_MODE_REFRESH_RATE        (128u)
@@ -103,10 +85,10 @@
 /* EZI2C interrupt priority must be higher than CAPSENSE&trade; interrupt. */
 #define EZI2C_INTR_PRIORITY             (2u)
 
-#define ILO_FREQ                        (40000u) // 25 HZ el oscilador interno
+
 #define TIME_IN_US                      (1000000u)
 
-#define MINIMUM_TIMER                   (TIME_IN_US / ILO_FREQ)
+#define MINIMUM_TIMER                   (TIME_IN_US / ILO_FREQUENCY)
 #if ((TIME_IN_US / ACTIVE_MODE_REFRESH_RATE) > (ACTIVE_MODE_FRAME_SCAN_TIME + ACTIVE_MODE_PROCESS_TIME))
 
 #define ACTIVE_MODE_TIMER           (TIME_IN_US / ACTIVE_MODE_REFRESH_RATE - \
@@ -139,26 +121,46 @@
 
 #if ENABLE_RUN_TIME_MEASUREMENT
 #define SYS_TICK_INTERVAL           (0x00FFFFFF)
-#define TIME_PER_TICK_IN_US         ((float)1/CY_CAPSENSE_CPU_CLK)*TIME_IN_US
+#define TIME_PER_TICK_IN_US         ((float)1/ILO_FREQUENCY*TIME_IN_US)
 #endif
+// TIME_PER_TICK_IN_US         ((float)1/CY_CAPSENSE_CPU_CLK)*TIME_IN_US
 
+// ILO Configuration
+//2ms for ILO Starting
+#define WDT_INTERRUPT_DEMO         (2U)
+#define WDT_DEMO                   (WDT_INTERRUPT_DEMO)
+#define ILO_START_UP_TIME          (2U)
+#define WDT_INTERRUPT_PRIORITY     (0U)
+//Para 16 bits
+#define WDT_INTERRUPT_INTERVAL_MS  (1638U)
+
+// Total sleep time for 30m
+#define DESIRED_WDT_INTERVAL       (WDT_INTERRUPT_INTERVAL_MS  * 1099)
 
 /* Touch status of the proximity sensor */
 #define TOUCH_STATE                     (3u)
 
 /* Proximity status of the proximity sensor */
 #define PROX_STATE                      (1u)
+#define IGNORE_BITS                (0U)
 
 
 
 
+// WATCHDOGTIMER DEFINITIONS
+/* WDT initialization function */
+void wdt_init(void);
+/* WDT interrupt service routine */
+void wdt_isr(void);
 
 
 
 // Flag del vaciado de memoria
 bool mem_flag = false;
 
-
+/* Variable to store the counts required after ILO compensation */
+static uint32_t ilo_compensated_counts = 0U;
+static uint32_t temp_ilo_counts = 0U;
 
 /*****************************************************************************
  * Finite state machine states for device operating states
@@ -175,11 +177,6 @@ typedef enum
 /*******************************************************************************
  * Function Prototypes
  ********************************************************************************/
-
-//prototipos Watchdog timer
-void wdt_init(void);
-void wdt_isr(void);
-
 static void initialize_capsense(void);
 static void capsense_msc0_isr(void);
 
@@ -193,31 +190,17 @@ static uint32_t stop_runtime_measurement();
 #endif
 
 
-
 volatile bool wdt_flag = false;
-//Flag interrupción wdt
-static uint32_t ilo_compensated_counts = 0U;
-
-volatile bool interrupt_flag = false;
-
-/* Variable to store the counts required after ILO compensation */
-static uint32_t ilo_compensated_counts = 0U;
-static uint32_t temp_ilo_counts = 0U;
-
-// Función del contador WDT WatchDog Timer
-// void WDT_IRQHandler(void){
-//     Cy_WDT_ClearInterrupt();
-//     wdt_ticks++;
-//      if (wdt_ticks >= 1800u)
-//     {
-//         wdt_ticks = 0;
-//         wdt_flag = true;   // Aquí prendes tu flag
-//     }
-// }
+volatile uint32_t wdt_ticks = 0;
 
 
 
 
+const cy_stc_sysint_t wdt_isr_cfg =
+{
+    .intrSrc = srss_interrupt_wdt_IRQn, /* Interrupt source is WDT interrupt */
+    .intrPriority = WDT_INTERRUPT_PRIORITY /* Interrupt priority is 0 */
+};
 /* Deep Sleep Callback function */
 void register_callback(void);
 cy_en_syspm_status_t deep_sleep_callback(cy_stc_syspm_callback_params_t *callbackParams,
@@ -231,28 +214,10 @@ cy_en_syspm_status_t deep_sleep_callback(cy_stc_syspm_callback_params_t *callbac
  * Global Definitions
  *******************************************************************************/
 
- //Configuración ISR
- const cy_stc_sysint_t wdt_isr_cfg =
-{
-    .intrSrc = srss_interrupt_wdt_IRQn, /* Interrupt source is WDT interrupt */
-
-};
-
 /* Variables holds the current low power state [ACTIVE, ALR or WOT] */
 APPLICATION_STATE capsense_state;
 
 cy_stc_scb_ezi2c_context_t ezi2c_context;
-
-// ISr configuration
-const cy_stc_sysint_t wdt_isr_cfg =
-{
-    .intrSrc = srss_interrupt_wdt_IRQn, /* Interrupt source is WDT interrupt */
-    .intrPriority = WDT_INTERRUPT_PRIORITY /* Interrupt priority is 0 */
-};
-
-
-
-
 
 /* Callback parameters for custom, EzI2C */
 
@@ -326,16 +291,14 @@ int main(void)
     static uint32_t active_processing_time;
     #endif
 
-    
-    
+    /* Initialize the device and board peripherals */
+    result = cybsp_init() ;
 
     #if ENABLE_RUN_TIME_MEASUREMENT
     init_sys_tick();
     #endif
 
-     /* Initialize the device and board peripherals */
-    /*Board init failed. Stop program execution */
-    result = cybsp_init() ;
+    /* Board init failed. Stop program execution */
     if (result != CY_RSLT_SUCCESS)
     {
         CY_ASSERT(CY_ASSERT_FAILED);
@@ -368,7 +331,6 @@ int main(void)
 
     /* Initialize MSC CAPSENSE&trade; */
     initialize_capsense();
-    wdt_init();
 
     /* Measures the actual ILO frequency and compensate MSCLP wake up timers */
     Cy_CapSense_IloCompensate(&cy_capsense_context);
@@ -379,17 +341,17 @@ int main(void)
 
     // Configuraciones del WDT
 
-    // Cy_WDT_Unlock();
+    Cy_WDT_Unlock();
 
-    // Cy_WDT_SetIgnoreBits(0u);
-    // Cy_WDT_SetMatch(40000u);
+    Cy_WDT_SetIgnoreBits(0u);
+    Cy_WDT_SetMatch(40000u);
 
-    // Cy_WDT_ClearInterrupt();
-    // // NVIC_EnableIRQ(WDT_IRQHandler);
-    // // NVIC_EnableIRQ(WCO_IRQn);
-    // Cy_WDT_Enable();
-    // uint32_t conteo = Cy_WDT_GetCount();
-    // CY_WDT_Lock();
+    Cy_WDT_ClearInterrupt();
+    // NVIC_EnableIRQ(WDT_IRQHandler);
+    // NVIC_EnableIRQ(WCO_IRQn);
+    Cy_WDT_Enable();
+    uint32_t conteo = Cy_WDT_GetCount();
+    CY_WDT_Lock();
 
     //Fin configuraciones WDT
 
@@ -567,7 +529,7 @@ int main(void)
                 case DEACT_MODE:
                 // Comando para apagar el sistema
                 // Cy_CapSense_DeepSleepCallback(&capsenseCbParams, CY_SYSPM_CHECK_READY);
-                Cy_SysPm_CpuEnterDeepSleep(); 
+                Cy_SysPm_CpuEnterDeepSleep();
                 // Cy_SysPm_CpuEnterDeepSleep();
 
     
@@ -750,7 +712,7 @@ static uint32_t stop_runtime_measurement()
     uint32_t runtime;
     ticks=Cy_SysTick_GetValue();
     ticks= SYS_TICK_INTERVAL - Cy_SysTick_GetValue();
-    runtime=ticks*TIME_PER_TICK_IN_US;
+    runtime= ticks*TIME_PER_TICK_IN_US;
     return runtime;
 }
 #endif
@@ -873,16 +835,12 @@ cy_en_syspm_status_t deep_sleep_callback(
     return ret_val;
 }
 
-
-
-//Funciones de inicialización de wdt
-
-
 void wdt_init(void)
 {
     cy_en_sysint_status_t status = CY_SYSINT_BAD_PARAM;
 
     /* Step 1- Write the ignore bits - operate with full 16 bits */
+    //Creo que son 32 para PSoC 4 Migrar
     Cy_WDT_SetIgnoreBits(IGNORE_BITS);
     if(Cy_WDT_GetIgnoreBits() != IGNORE_BITS)
     {
@@ -890,25 +848,36 @@ void wdt_init(void)
     }
 
     /* Step 2- Clear match event interrupt, if any */
+    //Migrar
     Cy_WDT_ClearInterrupt();
 
     /* Step 3- Enable ILO */
+    //Migrar
     Cy_SysClk_IloEnable();
+
+
     /* Waiting for proper start-up of ILO */
+    //Migrar 2ms para que se estabilice
     Cy_SysLib_Delay(ILO_START_UP_TIME);
 
     /* Starts the ILO accuracy/Trim measurement */
+    //Migrar, esta función inicializa la medición de precisión del ILO (puede ser opcional(?))
     Cy_SysClk_IloStartMeasurement();
-    /* Calculate the count value to set as WDT match since ILO is inaccurate */
-    // if(CY_SYSCLK_SUCCESS ==\
-    //             // Cy_SysClk_IloCompensate(DESIRED_WDT_INTERVAL, &temp_ilo_counts))
-    // {
-    //     ilo_compensated_counts = (uint32_t)temp_ilo_counts;
-    // }
 
-    if(WDT_DEMO == WDT_INTERRUPT_DEMO)
+
+    /* Calculate the count value to set as WDT match since ILO is inaccurate */
+
+    if(CY_SYSCLK_SUCCESS ==\
+                Cy_SysClk_IloCompensate(DESIRED_WDT_INTERVAL, &temp_ilo_counts))
+    {
+        ilo_compensated_counts = (uint32_t)temp_ilo_counts;
+    }
+
+    //Logica solo para el modo de interrupción
+    if(WDT_INTERRUPT_DEMO)
     {
         /* Step 4- Write match value if periodic interrupt mode selected */
+        // Define el valor de coincidencia, y cuando el contador alcanza ese valor, se hace la interrupción
         Cy_WDT_SetMatch(ilo_compensated_counts);
         if(Cy_WDT_GetMatch() != ilo_compensated_counts)
         {
@@ -917,16 +886,20 @@ void wdt_init(void)
 
         /* Step 5 - Initialize and enable interrupt if periodic interrupt
         mode selected */
+        // Migrar, aca se Inicializa la interrupción
         status = Cy_SysInt_Init(&wdt_isr_cfg, wdt_isr);
         if(status != CY_SYSINT_SUCCESS)
         {
             CY_ASSERT(0);
         }
+        //Migrar, aca se habilita la interrupción en el NVIC (Nested Vectored Interrupt Controller)
         NVIC_EnableIRQ(wdt_isr_cfg.intrSrc);
+        //Migrar, desenmascara la interrupción para que se pueda disparar
         Cy_WDT_UnmaskInterrupt();
     }
 
     /* Step 6- Enable WDT */
+    //Migrar, en este momento, el temporizador empieza a contar, actúa el delay
     Cy_WDT_Enable();
     if(Cy_WDT_IsEnabled() == false)
     {
@@ -950,12 +923,16 @@ void wdt_init(void)
 *****************************************************************************/
 void wdt_isr(void)
 {
+    // No es necesario este if porque siempre se está en modo interrupción
     #if (WDT_DEMO == WDT_INTERRUPT_DEMO)
         /* Mask the WDT interrupt to prevent further triggers */
+        // Blinda la interrupción para evitar disparos repetidos mientras se procesa
         Cy_WDT_MaskInterrupt();
         /* Set the interrupt flag */
-        interrupt_flag = true;
+        //Migrar, Notifica al bucle principal
+        wdt_flag = true;
     #endif
+
 
     #if (WDT_DEMO == WDT_RESET_DEMO)
         /* Do Nothing*/
