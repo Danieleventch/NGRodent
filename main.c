@@ -43,14 +43,15 @@
 
 //Modo de interrupcion
 #define WDT_DEMO                   (WDT_INTERRUPT_DEMO)
-// Media hora
-#define WDT_INTERRUPT_INTERVAL_MS  (1800000U)
+// Media hora son 1061 intervalos, valor máximo es de 1698 ms
+#define WDT_INTERRUPT_INTERVAL_MS  (1698U)
 
 // 16 bits completos del contador
 #define IGNORE_BITS                (0U)
 
 
 #define ILO_START_UP_TIME          (2U)
+#define WDT_INTERRUPT_PRIORITY     (0U)
 
 #define ENABLE_RUN_TIME_MEASUREMENT     (0u)
 
@@ -174,6 +175,11 @@ typedef enum
 /*******************************************************************************
  * Function Prototypes
  ********************************************************************************/
+
+//prototipos Watchdog timer
+void wdt_init(void);
+void wdt_isr(void);
+
 static void initialize_capsense(void);
 static void capsense_msc0_isr(void);
 
@@ -190,6 +196,8 @@ static uint32_t stop_runtime_measurement();
 
 volatile bool wdt_flag = false;
 //Flag interrupción wdt
+static uint32_t ilo_compensated_counts = 0U;
+
 volatile bool interrupt_flag = false;
 
 /* Variable to store the counts required after ILO compensation */
@@ -223,7 +231,7 @@ cy_en_syspm_status_t deep_sleep_callback(cy_stc_syspm_callback_params_t *callbac
  * Global Definitions
  *******************************************************************************/
 
- //wdt_isr del ejemplo de watchdog timer
+ //Configuración ISR
  const cy_stc_sysint_t wdt_isr_cfg =
 {
     .intrSrc = srss_interrupt_wdt_IRQn, /* Interrupt source is WDT interrupt */
@@ -234,6 +242,17 @@ cy_en_syspm_status_t deep_sleep_callback(cy_stc_syspm_callback_params_t *callbac
 APPLICATION_STATE capsense_state;
 
 cy_stc_scb_ezi2c_context_t ezi2c_context;
+
+// ISr configuration
+const cy_stc_sysint_t wdt_isr_cfg =
+{
+    .intrSrc = srss_interrupt_wdt_IRQn, /* Interrupt source is WDT interrupt */
+    .intrPriority = WDT_INTERRUPT_PRIORITY /* Interrupt priority is 0 */
+};
+
+
+
+
 
 /* Callback parameters for custom, EzI2C */
 
@@ -307,14 +326,16 @@ int main(void)
     static uint32_t active_processing_time;
     #endif
 
-    /* Initialize the device and board peripherals */
-    result = cybsp_init() ;
+    
+    
 
     #if ENABLE_RUN_TIME_MEASUREMENT
     init_sys_tick();
     #endif
 
-    /* Board init failed. Stop program execution */
+     /* Initialize the device and board peripherals */
+    /*Board init failed. Stop program execution */
+    result = cybsp_init() ;
     if (result != CY_RSLT_SUCCESS)
     {
         CY_ASSERT(CY_ASSERT_FAILED);
@@ -347,6 +368,7 @@ int main(void)
 
     /* Initialize MSC CAPSENSE&trade; */
     initialize_capsense();
+    wdt_init();
 
     /* Measures the actual ILO frequency and compensate MSCLP wake up timers */
     Cy_CapSense_IloCompensate(&cy_capsense_context);
@@ -545,7 +567,7 @@ int main(void)
                 case DEACT_MODE:
                 // Comando para apagar el sistema
                 // Cy_CapSense_DeepSleepCallback(&capsenseCbParams, CY_SYSPM_CHECK_READY);
-                Cy_SysPm_CpuEnterDeepSleep();
+                Cy_SysPm_CpuEnterDeepSleep(); 
                 // Cy_SysPm_CpuEnterDeepSleep();
 
     

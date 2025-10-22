@@ -1,0 +1,19 @@
+# ninja log v6
+25	607	7828454555100394	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/config/GeneratedSource/cycfg_clocks.o	e5b8bc203e67863f
+56	620	7828454555444538	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/cybsp.o	ab89a8ed50a9d986
+83	628	7828454555671037	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/system_cat2.o	b77661180bac39d9
+69	635	7828454555520242	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/startup_psoc4100tp.o	befe8ecb89b4e858
+32	652	7828454555100394	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/config/GeneratedSource/cycfg_peripherals.o	1bcd5b414908a1d7
+47	663	7828454555300015	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/config/GeneratedSource/cycfg_system.o	ce7bc519bedc91d1
+8	671	7828454554898820	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/config/GeneratedSource/cycfg.o	c4f7113858aaf3c4
+40	679	7828454555239872	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/config/GeneratedSource/cycfg_pins.o	3a2adde20ebb1976
+18	686	7828454554997418	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/bsps/APP_CY8CPROTO-041TP/config/GeneratedSource/cycfg_capsense.o	43307f1a4f7663c4
+608	963	7828454560958479	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/mtb-pdl-cat2/drivers/source/COMPONENT_CM0P/TOOLCHAIN_GCC_ARM/cy_syslib_gcc.o	744c1674b8cc4265
+655	1117	7828454561398550	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/capsense/cy_capsense_csx_v2.o	6598f932fe274ffc
+636	1133	7828454561202477	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/capsense/cy_capsense_csd_v2.o	a5dfec00c45dc563
+621	1140	7828454561048133	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/capsense/cy_capsense_centroid.o	28860fe84dda02d9
+663	1213	7828454561480130	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/capsense/cy_capsense_filter.o	9817d3ae1581d1b2
+689	1215	7828454561739839	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/capsense/cy_capsense_processing.o	59de8b14ee5938de
+628	1265	7828454561127771	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/capsense/cy_capsense_control.o	a8a692729d032998
+679	1299	7828454561617945	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/capsense/cy_capsense_generator_v3.o	f37c51cb09acd54e
+672	1327	7828454561545385	C:/Users/DANIEL/NRGeneration/NEXTGEN/build/Debug/libraries_shared/capsense/cy_capsense_generator_lp.o	c4257bdebb5c44ee
