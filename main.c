@@ -35,7 +35,7 @@
  ********************************************************************************/
 /*Enables the Runtime measurement functionality used to for processing time measurement */
 //Esto hay que activarlo para hacer las pruebas
-#define ENABLE_RUN_TIME_MEASUREMENT     (1u)
+// #define ENABLE_RUN_TIME_MEASUREMENT     (1u)
 
 /* Enable this, if Tuner needs to be enabled */
 #define ENABLE_TUNER                    (1u)
@@ -46,6 +46,10 @@
 
 /* 128Hz Refresh rate in Active mode */
 #define ACTIVE_MODE_REFRESH_RATE        (128u)
+
+
+// Active mode en modo vaciado de memoria
+#define ACTIVE_MODE_LOW_REFRESH_RATE    (16u)
 
 
 /* TIEMPO PARA PASAR A ALR SI NO HAY ACTIVIDAD*/
@@ -115,26 +119,33 @@
 
 // Timeout establecido para un caso de 8 sensores 21 raw counts
 #define WOT_MODE_TIMEOUT                ((TIME_IN_US / WOT_MODE_REFRESH_RATE)*WOT_MODE_TIMEOUT_SEC)
-
+ #define mock ((DESIRED_WDT_INTERVAL*ILO_FREQUENCY)/1000000UL)
 
 #define TIMEOUT_RESET                   (0u)
 
-#if ENABLE_RUN_TIME_MEASUREMENT
-#define SYS_TICK_INTERVAL           (0x00FFFFFF)
-#define TIME_PER_TICK_IN_US         ((float)1/ILO_FREQUENCY*TIME_IN_US)
-#endif
+// #if ENABLE_RUN_TIME_MEASUREMENT
+// #define SYS_TICK_INTERVAL           (0x00FFFFFF)
+// #define TIME_PER_TICK_IN_US         ((float)1/ILO_FREQUENCY*TIME_IN_US)
+// #endif
 // TIME_PER_TICK_IN_US         ((float)1/CY_CAPSENSE_CPU_CLK)*TIME_IN_US
+
+
+
+
+
 
 // ILO Configuration
 //2ms for ILO Starting
-#define WDT_INTERRUPT_DEMO         (2U)
-#define WDT_DEMO                   (WDT_INTERRUPT_DEMO)
+// #define WDT_INTERRUPT_DEMO         (2U)
+// #define WDT_DEMO                   (WDT_INTERRUPT_DEMO)
+//2 microseconds before start
 #define ILO_START_UP_TIME          (2U)
+//parameter for config
 #define WDT_INTERRUPT_PRIORITY     (0U)
-//Para 16 bits
+//For 16 bits 1638ms 
 #define WDT_INTERRUPT_INTERVAL_MS  (1638U)
 
-// Total sleep time for 30m
+// Total sleep time for 30m 1099 intervals
 #define DESIRED_WDT_INTERVAL       (WDT_INTERRUPT_INTERVAL_MS  * 1099)
 
 /* Touch status of the proximity sensor */
@@ -146,7 +157,7 @@
 
 
 
-
+//Prototypes
 // WATCHDOGTIMER DEFINITIONS
 /* WDT initialization function */
 void wdt_init(void);
@@ -160,7 +171,7 @@ bool mem_flag = false;
 
 /* Variable to store the counts required after ILO compensation */
 static uint32_t ilo_compensated_counts = 0U;
-static uint32_t temp_ilo_counts = 0U;
+// static uint32_t temp_ilo_counts = 0U;
 
 /*****************************************************************************
  * Finite state machine states for device operating states
@@ -183,15 +194,17 @@ static void capsense_msc0_isr(void);
 static void ezi2c_isr(void);
 static void initialize_capsense_tuner(void);
 
-#if ENABLE_RUN_TIME_MEASUREMENT
-static void init_sys_tick();
-static void start_runtime_measurement();
-static uint32_t stop_runtime_measurement();
-#endif
+// #if ENABLE_RUN_TIME_MEASUREMENT
+// static void init_sys_tick();
+// static void start_runtime_measurement();
+// // static uint32_t stop_runtime_measurement();
+// #endif
 
-
-volatile bool wdt_flag = false;
+//Flag de vaciado de memoria
+// volatile bool wdt_flag = false;
 volatile uint32_t wdt_ticks = 0;
+//Flag de interrupción
+volatile bool int_flag = false;
 
 
 
@@ -259,10 +272,10 @@ cy_stc_syspm_callback_t deepSleepCb =
 };
 
 //ELIMINAR
-static cy_stc_syspm_callback_params_t capsenseCbParams = {
-    .base = NULL,
-    .context = &cy_capsense_context  // puntero a tu estructura de contexto CapSense
-};
+// static cy_stc_syspm_callback_params_t capsenseCbParams = {
+//     .base = NULL,
+//     .context = &cy_capsense_context  // puntero a tu estructura de contexto CapSense
+// };
 
 /*******************************************************************************
  * Function Name: main
@@ -287,16 +300,19 @@ int main(void)
     // Variables WOT
     mem_flag = false;
 
-    #if ENABLE_RUN_TIME_MEASUREMENT
-    static uint32_t active_processing_time;
-    #endif
+    //Puntero para revisar sram
+    cy_stc_capsense_internal_context_t *internalCtx = cy_capsense_context.ptrInternalContext;
+
+    // #if ENABLE_RUN_TIME_MEASUREMENT
+    // // static uint32_t active_processing_time;
+    // #endif
 
     /* Initialize the device and board peripherals */
     result = cybsp_init() ;
 
-    #if ENABLE_RUN_TIME_MEASUREMENT
-    init_sys_tick();
-    #endif
+    // #if ENABLE_RUN_TIME_MEASUREMENT
+    // init_sys_tick();
+    // #endif
 
     /* Board init failed. Stop program execution */
     if (result != CY_RSLT_SUCCESS)
@@ -339,21 +355,7 @@ int main(void)
     Cy_CapSense_ConfigureMsclpTimer(WOT_MODE_TIMER, &cy_capsense_context);
 
 
-    // Configuraciones del WDT
-
-    Cy_WDT_Unlock();
-
-    Cy_WDT_SetIgnoreBits(0u);
-    Cy_WDT_SetMatch(40000u);
-
-    Cy_WDT_ClearInterrupt();
-    // NVIC_EnableIRQ(WDT_IRQHandler);
-    // NVIC_EnableIRQ(WCO_IRQn);
-    Cy_WDT_Enable();
-    uint32_t conteo = Cy_WDT_GetCount();
-    CY_WDT_Lock();
-
-    //Fin configuraciones WDT
+  
 
     for (;;)
     {
@@ -375,9 +377,20 @@ int main(void)
 
                     /* This is a place where all interrupt handlers will be executed */
                     interruptStatus = Cy_SysLib_EnterCriticalSection();
+
+                    
                 }
 
                 Cy_SysLib_ExitCriticalSection(interruptStatus);
+
+                if((internalCtx->currentSlotIndex == internalCtx->endSlotIndex) && (internalCtx->numValidSlots == internalCtx->numSlots))
+                    {
+                    mem_flag = true;
+                    capsense_state = ACTIVE_MODE;
+                    //Frecuencia de muestreo de active mode
+                    capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
+                    Cy_CapSense_ConfigureMsclpTimer(ACTIVE_MODE_TIMER, &cy_capsense_context);
+                    }
 
                 if (Cy_CapSense_IsAnyLpWidgetActive(&cy_capsense_context))
                 {
@@ -401,13 +414,7 @@ int main(void)
                 //Preguntar si es necesario insertar aquí una critical section
                 //Revisar el ultimo address pero igual dejar un timeout
 
-                else if(wdt_flag){
-                    mem_flag = true;
-                    capsense_state = ACTIVE_MODE;
-                    //Frecuencia de muestreo de active mode
-                    capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
-                    // active_processing_time = 0;
-                }
+                
 
                 else
                 {
@@ -432,6 +439,21 @@ int main(void)
 
 
             case ACTIVE_MODE:
+             if(mem_flag){
+                    // Vaciar la memoria, actualizar baseline
+
+
+
+                    mem_flag = false;
+                    capsense_state = WOT_MODE;
+    
+                    //Frecuencia de muestreo de active mode
+                    capsense_state_timeout = WOT_MODE_TIMEOUT;
+                    Cy_CapSense_ConfigureMsclpTimer(WOT_MODE_TIMEOUT, &cy_capsense_context);
+
+                    //Frecuencia de muestreo de active mode
+                    // capsense_state_timeout = WOT_MODE_TIMEOUT;
+             }
 
                 Cy_CapSense_ScanAllSlots(&cy_capsense_context);
 
@@ -458,10 +480,10 @@ int main(void)
 
                 // Run time Measurement
 
-                #if ENABLE_RUN_TIME_MEASUREMENT
-                active_processing_time=0;
-                start_runtime_measurement();
-                #endif
+                // #if ENABLE_RUN_TIME_MEASUREMENT
+                // // active_processing_time=0;
+                // start_runtime_measurement();
+                // #endif
                  //Salimos de seccion critica
                 Cy_SysLib_ExitCriticalSection(interruptStatus);
 
@@ -481,22 +503,12 @@ int main(void)
                 if(Cy_CapSense_IsAnyWidgetActive(&cy_capsense_context))
                 {
                     capsense_state_timeout = ACTIVE_MODE_TIMEOUT;
-                    
                 }
 
-                else if(mem_flag){
-                    // Vaciar la memoria
+                
 
 
-                    capsense_state = WOT_MODE;
-                    //Frecuencia de muestreo de active mode
-                    capsense_state_timeout = WOT_MODE_TIMEOUT;
-                    mem_flag = false;
-
-
-                }
-
-
+               
                 else
                 {
                     capsense_state_timeout--;
@@ -511,16 +523,7 @@ int main(void)
                     }
                 }
 
-                #if ENABLE_RUN_TIME_MEASUREMENT
-                active_processing_time=stop_runtime_measurement();
-                #endif
-
-                // #if ENABLE_PWM_LED
-                // led_control();
-                // #endif
-
-
-                // CONDICION DE PASO A WOT
+                
 
                 break;
                 /* End of ACTIVE_MODE */
@@ -529,12 +532,10 @@ int main(void)
                 case DEACT_MODE:
                 // Comando para apagar el sistema
                 // Cy_CapSense_DeepSleepCallback(&capsenseCbParams, CY_SYSPM_CHECK_READY);
-                Cy_SysPm_CpuEnterDeepSleep();
-                // Cy_SysPm_CpuEnterDeepSleep();
-
-    
-                // if (active_processing_time >= DEEP_SLEEP_DEACT_TIME){
-                 if (wdt_flag){
+                wdt_init();
+                
+                
+                 if (int_flag){
                     capsense_state = WOT_MODE;
                     capsense_state_timeout = WOT_MODE_TIMEOUT;
                     Cy_CapSense_ConfigureMsclpTimer(WOT_MODE_TIMER, &cy_capsense_context);
@@ -668,54 +669,56 @@ static void ezi2c_isr(void)
     Cy_SCB_EZI2C_Interrupt(CYBSP_EZI2C_HW, &ezi2c_context);
 }
 
-#if ENABLE_RUN_TIME_MEASUREMENT
-/*******************************************************************************
- * Function Name: init_sys_tick
- ********************************************************************************
- * Summary:
- *  initializes the system tick with highest possible value to start counting down.
- *
- *******************************************************************************/
-static void init_sys_tick()
-{
-    Cy_SysTick_Init (CY_SYSTICK_CLOCK_SOURCE_CLK_CPU ,SYS_TICK_INTERVAL);
-}
-#endif
+// #if ENABLE_RUN_TIME_MEASUREMENT
+// /*******************************************************************************
+//  * Function Name: init_sys_tick
+//  ********************************************************************************
+//  * Summary:
+//  *  initializes the system tick with highest possible value to start counting down.
+//  *
+//  *******************************************************************************/
+// static void init_sys_tick()
+// {
+//     Cy_SysTick_Init (CY_SYSTICK_CLOCK_SOURCE_CLK_CPU ,SYS_TICK_INTERVAL);
+// }
+// #endif
 
-#if ENABLE_RUN_TIME_MEASUREMENT
-/*******************************************************************************
- * Function Name: start_runtime_measurement
- ********************************************************************************
- * Summary:
- *  Initializes the system tick counter by calling Cy_SysTick_Clear() API.
- *******************************************************************************/
-static void start_runtime_measurement()
-{
-    Cy_SysTick_Clear();
-}
+// #if ENABLE_RUN_TIME_MEASUREMENT
+// /*******************************************************************************
+//  * Function Name: start_runtime_measurement
+//  ********************************************************************************
+//  * Summary:
+//  *  Initializes the system tick counter by calling Cy_SysTick_Clear() API.
+//  *******************************************************************************/
+// static void start_runtime_measurement()
+// {
+//     Cy_SysTick_Clear();
+// }
 
-/*******************************************************************************
- * Function Name: stop_runtime_measurement
- ********************************************************************************
- * Summary:
- *  Reads the system tick and converts to time in microseconds(us).
- *
- *  Returns:
- *  runtime - in microseconds(us)
- *******************************************************************************/
-#endif
+// /*******************************************************************************
+//  * Function Name: stop_runtime_measurement
+//  ********************************************************************************
+//  * Summary:
+//  *  Reads the system tick and converts to time in microseconds(us).
+//  *
+//  *  Returns:
+//  *  runtime - in microseconds(us)
+//  *******************************************************************************/
+// #endif
 
-#if ENABLE_RUN_TIME_MEASUREMENT
-static uint32_t stop_runtime_measurement()
-{
-    uint32_t ticks;
-    uint32_t runtime;
-    ticks=Cy_SysTick_GetValue();
-    ticks= SYS_TICK_INTERVAL - Cy_SysTick_GetValue();
-    runtime= ticks*TIME_PER_TICK_IN_US;
-    return runtime;
-}
-#endif
+
+//Cambiar función
+// #if ENABLE_RUN_TIME_MEASUREMENT
+// static uint32_t stop_runtime_measurement()
+// {
+//     uint32_t ticks;
+//     uint32_t runtime;
+//     ticks=Cy_SysTick_GetValue();
+//     ticks= SYS_TICK_INTERVAL - Cy_SysTick_GetValue();
+//     runtime= ticks*TIME_PER_TICK_IN_US;
+//     return runtime;
+// }
+// #endif
 
 // #if ENABLE_PWM_LED
 // uint32_t proxSensorStatus;
@@ -838,7 +841,7 @@ cy_en_syspm_status_t deep_sleep_callback(
 void wdt_init(void)
 {
     cy_en_sysint_status_t status = CY_SYSINT_BAD_PARAM;
-
+    Cy_SysPm_CpuEnterDeepSleep();
     /* Step 1- Write the ignore bits - operate with full 16 bits */
     //Creo que son 32 para PSoC 4 Migrar
     Cy_WDT_SetIgnoreBits(IGNORE_BITS);
@@ -867,19 +870,22 @@ void wdt_init(void)
 
     /* Calculate the count value to set as WDT match since ILO is inaccurate */
 
-    if(CY_SYSCLK_SUCCESS ==\
-                Cy_SysClk_IloCompensate(DESIRED_WDT_INTERVAL, &temp_ilo_counts))
-    {
-        ilo_compensated_counts = (uint32_t)temp_ilo_counts;
-    }
+    
+        ilo_compensated_counts = (DESIRED_WDT_INTERVAL*ILO_FREQUENCY)/1000000UL;
 
+        uint32_t match_value = ilo_compensated_counts;
+        // uint8_t adjusted_ignore_bits = IGNORE_BITS;
     //Logica solo para el modo de interrupción
-    if(WDT_INTERRUPT_DEMO)
-    {
         /* Step 4- Write match value if periodic interrupt mode selected */
         // Define el valor de coincidencia, y cuando el contador alcanza ese valor, se hace la interrupción
-        Cy_WDT_SetMatch(ilo_compensated_counts);
-        if(Cy_WDT_GetMatch() != ilo_compensated_counts)
+        // while(match_value> 0xFFFFU && adjusted_ignore_bits<16U)
+        // {
+        
+        //     match_value>>=1;
+        //     adjusted_ignore_bits++;
+        // }
+        Cy_WDT_SetMatch((uint16_t)match_value);
+        if(Cy_WDT_GetMatch() != (uint16_t)match_value)
         {
             CY_ASSERT(0);
         }
@@ -896,7 +902,7 @@ void wdt_init(void)
         NVIC_EnableIRQ(wdt_isr_cfg.intrSrc);
         //Migrar, desenmascara la interrupción para que se pueda disparar
         Cy_WDT_UnmaskInterrupt();
-    }
+    
 
     /* Step 6- Enable WDT */
     //Migrar, en este momento, el temporizador empieza a contar, actúa el delay
@@ -923,20 +929,13 @@ void wdt_init(void)
 *****************************************************************************/
 void wdt_isr(void)
 {
-    // No es necesario este if porque siempre se está en modo interrupción
-    #if (WDT_DEMO == WDT_INTERRUPT_DEMO)
+    
         /* Mask the WDT interrupt to prevent further triggers */
         // Blinda la interrupción para evitar disparos repetidos mientras se procesa
         Cy_WDT_MaskInterrupt();
         /* Set the interrupt flag */
         //Migrar, Notifica al bucle principal
-        wdt_flag = true;
-    #endif
-
-
-    #if (WDT_DEMO == WDT_RESET_DEMO)
-        /* Do Nothing*/
-    #endif
+        int_flag = true;
 }
 
 /* [] END OF FILE */
